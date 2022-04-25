@@ -50,6 +50,124 @@ volatile uint16_t espNowMessagesReceived = 0;
 
 #endif
 
+class LedLight {
+  public:
+    LedLight(uint8_t pin) {
+      pinMode(pin, OUTPUT);
+      _pin = pin;
+      _pwmValue = PWM_MIN;
+    }
+
+    void on() {
+      _pwmValue = PWM_MAX;
+      _writeOut();
+    }
+
+    void pwm(uint8_t pwmValue) {
+      long newValue = map(pwmValue, 0, UINT8_MAX, PWM_MIN, PWM_MAX);
+      if (newValue != _pwmValue) {
+        _pwmValue = newValue;
+        _writeOut();
+      }
+    }
+
+    void pwm(uint16_t pwmValue) {
+      if (pwmValue >= PWM_MIN) {
+        if (pwmValue > PWM_MAX) {
+          pwmValue = PWM_MAX;
+        }
+        if (pwmValue != _pwmValue) {
+          _pwmValue = pwmValue;
+          _writeOut();
+        }
+      }
+    }
+
+    void off() {
+      _pwmValue = PWM_MIN;
+      _writeOut();
+    }
+
+    bool isOn() {
+      return _pwmValue > 0;
+    }
+
+    bool isOff() {
+      return _pwmValue == 0;
+    }
+
+    void toggle() {
+      if (isOn()) {
+        off();
+      } else {
+        on();
+      }
+    }
+
+  private:
+    uint8_t _pin;
+    uint16_t _pwmValue;
+
+    void _writeOut() {
+      analogWrite(_pin, _pwmValue);
+    }
+};
+
+
+// Lights available on the trailer
+LedLight tailLight(TAILLIGHT_PIN);
+LedLight indicatorL(INDICATOR_L_PIN);
+LedLight indicatorR(INDICATOR_R_PIN);
+LedLight reversingLight(REVERSING_LIGHT_PIN);
+LedLight sideLight(SIDELIGHT_PIN);
+
+
+// Detect state of coupler switch (NO to GND)
+void switchDetect() {
+
+  static unsigned long switchMillis;
+
+  if (digitalRead(COUPLER_SWITCH_PIN) == LOW) {
+    switchMillis = millis();
+  }
+
+  trailerCoupled = (millis() - switchMillis <= 1000); // 1s delay, if not coupled (yet)
+
+}
+
+
+// Show LEDs using the received ESP-NOW data
+void showLights() {
+
+  tailLight.pwm(trailerData.tailLight);
+  indicatorL.pwm(trailerData.indicatorL);
+  indicatorR.pwm(trailerData.indicatorR);
+  reversingLight.pwm(trailerData.reversingLight);
+  sideLight.pwm(trailerData.sideLight);
+
+}
+
+
+void turnOffLights() {
+
+  tailLight.off();
+  indicatorL.off();
+  indicatorR.off();
+  reversingLight.off();
+  sideLight.off();
+
+}
+
+
+void turnOnLights() {
+
+  tailLight.on();
+  indicatorL.on();
+  indicatorR.on();
+  reversingLight.on();
+  sideLight.on();
+
+}
 
 // Callback function that will be run when LEDs lights data is received
 void onDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
@@ -63,9 +181,9 @@ void onDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   memcpy(&trailerData, incomingData, sizeof(trailerData));
 
   if (trailerCoupled) {
-    showLEDs();
+    showLights();
   } else {
-    turnOffLEDs();
+    turnOffLights();
   }
   
 }
@@ -97,21 +215,18 @@ void setupEspNow() {
 // Main setup, runs only once
 void setup() {
 
-  pinMode(TAILLIGHT_PIN, OUTPUT);
-  pinMode(INDICATOR_L_PIN, OUTPUT);
-  pinMode(INDICATOR_R_PIN, OUTPUT);
-  pinMode(REVERSING_LIGHT_PIN, OUTPUT);
-  pinMode(SIDELIGHT_PIN, OUTPUT);
   pinMode(COUPLER_SWITCH_PIN, INPUT_PULLUP);
 
   Serial.begin(115200); // USB serial (mainly for DEBUG)
 
   // Short LEDs test
-  turnOnLEDs();
+  indicatorL.on();
+  indicatorR.on();
   delay(2000);
-  turnOffLEDs();
+  indicatorL.off();
+  indicatorR.off();
 
-  Serial.printf("Wireless ESP-NOW Trailer Client for ESP8266 version %.2f\n", codeVersion);
+  Serial.printf("Wireless ESP-NOW Trailer Client for ESP8266 version %.1f\n", codeVersion);
   Serial.printf("https://github.com/TheDIYGuy999/Rc_Engine_Sound_ESP32\n");
   Serial.printf("CPU Clock: %i Mhz, Free RAM: %i Byte, Free flash memory: %i Byte\n", ESP.getCpuFreqMHz(), ESP.getFreeHeap(), ESP.getFreeSketchSpace());
   Serial.printf("Last reset reason: %s\n", ESP.getResetReason().c_str());
@@ -127,54 +242,6 @@ void setup() {
 
   ts.add(0, SWITCH_DETECT_MS, [&](void *) { switchDetect(); }, nullptr, true); // Add scheduler for switch detection every SWITCH_DETECT_MS ms
 
-}
-
-
-// Detect state of coupler switch (NO to GND)
-void switchDetect() {
-
-  static unsigned long switchMillis;
-
-  if (digitalRead(COUPLER_SWITCH_PIN) == LOW) {
-    switchMillis = millis();
-  }
-
-  trailerCoupled = (millis() - switchMillis <= 1000); // 1s delay, if not coupled (yet)
-
-}
-
-
-// Show LEDs using the received ESP-NOW data
-void showLEDs() {
-
-  analogWrite(TAILLIGHT_PIN, map(trailerData.tailLight, 0, UINT8_MAX, PWM_MIN, PWM_MAX));
-  analogWrite(INDICATOR_L_PIN, map(trailerData.indicatorL, 0, UINT8_MAX, PWM_MIN, PWM_MAX));
-  analogWrite(INDICATOR_R_PIN, map(trailerData.indicatorR, 0, UINT8_MAX, PWM_MIN, PWM_MAX));
-  analogWrite(REVERSING_LIGHT_PIN, map(trailerData.reversingLight, 0, UINT8_MAX, PWM_MIN, PWM_MAX));
-  analogWrite(SIDELIGHT_PIN, map(trailerData.sideLight, 0, UINT8_MAX, PWM_MIN, PWM_MAX));
-
-}
-
-
-// Set all LEDs to a common PWM value
-void setLEDsPWM(uint16_t pwmValue) {
-
-  analogWrite(TAILLIGHT_PIN, pwmValue);
-  analogWrite(INDICATOR_L_PIN, pwmValue);
-  analogWrite(INDICATOR_R_PIN, pwmValue);
-  analogWrite(REVERSING_LIGHT_PIN, pwmValue);
-  analogWrite(SIDELIGHT_PIN, pwmValue);
-
-}
-
-
-void turnOffLEDs() {
-  setLEDsPWM(PWM_MIN);
-}
-
-
-void turnOnLEDs() {
-  setLEDsPWM(PWM_MAX);
 }
 
 
