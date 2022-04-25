@@ -24,9 +24,11 @@ const float codeVersion = 0.5; // Software revision
 #define PWM_MIN 0
 #define PWM_MAX 1023
 
-#define SWITCH_DETECT_MS 500 // Detect state of the coupler switch every 0.5s
+#define SWITCH_DETECT_MS 500 // Detect state of the coupler switch every 0.5 s
 
-TickerScheduler ts(1);  // Scheduler used for switch periodic detection
+#define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s
+
+TickerScheduler ts(2);  // Scheduler used for switch periodic detection
 
 // This struct contains the data transmitted from the main controller unit
 typedef struct struct_message {
@@ -39,6 +41,9 @@ typedef struct struct_message {
 
 struct_message trailerData;
 
+const float batteryVoltageOffset = -0.135;
+float batteryVoltage;
+
 bool trailerCoupled;  // This is true, when the trailer is coupled (NO switch closed to GND)
 
 #ifdef DEBUG_MODE
@@ -47,6 +52,9 @@ bool trailerCoupled;  // This is true, when the trailer is coupled (NO switch cl
 const unsigned long printDebugDelayMillis = 3000;  // 3s delay between debug messages
 volatile unsigned long lastDebugMillis = millis();
 volatile uint16_t espNowMessagesReceived = 0;
+
+int adcRawValue;
+float adcVoltValue;
 
 #endif
 
@@ -61,6 +69,10 @@ class LedLight {
     void on() {
       _pwmValue = PWM_MAX;
       _writeOut();
+    }
+
+    uint16_t pwm() {
+      return _pwmValue;
     }
 
     void pwm(uint8_t pwmValue) {
@@ -120,6 +132,23 @@ LedLight indicatorL(INDICATOR_L_PIN);
 LedLight indicatorR(INDICATOR_R_PIN);
 LedLight reversingLight(REVERSING_LIGHT_PIN);
 LedLight sideLight(SIDELIGHT_PIN);
+
+
+// Read 18650 lipo battery voltage
+void readBatteryVoltage() {
+
+  int raw = analogRead(A0);
+  float volt = raw / 1023.0;
+  batteryVoltage = (volt * 4.2) + batteryVoltageOffset;
+
+#ifdef DEBUG_MODE
+
+  adcRawValue = raw;
+  adcVoltValue = volt;
+
+#endif
+
+}
 
 
 // Detect state of coupler switch (NO to GND)
@@ -215,7 +244,8 @@ void setupEspNow() {
 // Main setup, runs only once
 void setup() {
 
-  pinMode(COUPLER_SWITCH_PIN, INPUT_PULLUP);
+  pinMode(COUPLER_SWITCH_PIN, INPUT);
+  pinMode(A0, INPUT);
 
   Serial.begin(115200); // USB serial (mainly for DEBUG)
 
@@ -230,7 +260,9 @@ void setup() {
   Serial.printf("https://github.com/TheDIYGuy999/Rc_Engine_Sound_ESP32\n");
   Serial.printf("CPU Clock: %i Mhz, Free RAM: %i Byte, Free flash memory: %i Byte\n", ESP.getCpuFreqMHz(), ESP.getFreeHeap(), ESP.getFreeSketchSpace());
   Serial.printf("Last reset reason: %s\n", ESP.getResetReason().c_str());
-  Serial.printf("Trailer MAC address: %s\n\n", WiFi.macAddress().c_str());
+  Serial.printf("Trailer MAC address: %s\n", WiFi.macAddress().c_str());
+  readBatteryVoltage();
+  Serial.printf("Battery voltage: %.2f V\n\n", batteryVoltage);
   Serial.printf("Add or replace the MAC address of this device in '10_adjustmentsTrailer.h' file of the main controller:\n");
   {
     uint8_t mac[6];
@@ -241,6 +273,7 @@ void setup() {
   setupEspNow();
 
   ts.add(0, SWITCH_DETECT_MS, [&](void *) { switchDetect(); }, nullptr, true); // Add scheduler for switch detection every SWITCH_DETECT_MS ms
+  ts.add(1, READ_BATTERY_VOLTAGE_MS, [&](void *) { readBatteryVoltage(); }, nullptr, true); // Add scheduler for reading battery voltage every READ_BATTERY_VOLTAGE_MS ms
 
 }
 
@@ -254,12 +287,13 @@ void loop() {
 
   if (millis() - lastDebugMillis > 3000) {
     Serial.printf("DEBUG_MODE:\n");
+    Serial.printf("Battery voltage       : %.2f V (adcVoltValue: %.4f, batteryVoltageOffset: %.4f, adcRawValue: %i)\n", batteryVoltage, adcVoltValue, batteryVoltageOffset, adcRawValue);
     Serial.printf("Coupler switch        : %s\n", trailerCoupled ? "closed" : "open");
-    Serial.printf("Taillights (TL)       : %i\n", trailerData.tailLight);
-    Serial.printf("Sidelights (SL)       : %i\n", trailerData.sideLight);
-    Serial.printf("Reversing Lights (REV): %i\n", trailerData.reversingLight);
-    Serial.printf("Indicator L (IL)      : %i\n", trailerData.indicatorL);
-    Serial.printf("Indicator R (IL)      : %i\n", trailerData.indicatorR);
+    Serial.printf("Taillights (TL)       : %i (received value: %i)\n", tailLight.pwm(), trailerData.tailLight);
+    Serial.printf("Sidelights (SL)       : %i (received value: %i)\n", sideLight.pwm(), trailerData.sideLight);
+    Serial.printf("Reversing Lights (REV): %i (received value: %i)\n", reversingLight.pwm(), trailerData.reversingLight);
+    Serial.printf("Indicator L (IL)      : %i (received value: %i)\n", indicatorL.pwm(), trailerData.indicatorL);
+    Serial.printf("Indicator R (IL)      : %i (received value: %i)\n", indicatorR.pwm(), trailerData.indicatorR);
     Serial.printf("ESP-NOW message count : %i (last %is)\n\n", espNowMessagesReceived, (uint8_t)(printDebugDelayMillis/1000.0));
 
     lastDebugMillis = millis();
