@@ -13,9 +13,9 @@ const float codeVersion = 0.5; // Software revision
 
 // PINs used for LED lights and coupler switch
 #define TAILLIGHT_PIN 14 // (D5) Red tail- & brake-lights (combined)
-#define INDICATOR_L_PIN 5 // (D1) Orange left indicator (turn signal) light (onboard LED)
+#define INDICATOR_L_PIN 5 // (D1) Orange left indicator (turn signal) light
 #define INDICATOR_R_PIN 4 // (D2) Orange right indicator (turn signal) light
-#define REVERSING_LIGHT_PIN 2 // (D4) White reversing light
+#define REVERSING_LIGHT_PIN 2 // (D4) White reversing light (also connected to onboard LED)
 #define SIDELIGHT_PIN 13 // (D7) Side lights
 
 #define COUPLER_SWITCH_PIN 12 // (D6) This NO switch is closed, if the trailer is coupled to the 5th wheel. Connected between Pin 16 and GND.
@@ -86,7 +86,6 @@ class LedLight {
     }
 
     void pwm(uint16_t pwmValue) {
-      if (pwmValue >= PWM_MIN) {
         if (pwmValue > PWM_MAX) {
           pwmValue = PWM_MAX;
         }
@@ -94,7 +93,6 @@ class LedLight {
           _pwmValue = pwmValue;
           _writeOut();
         }
-      }
     }
 
     void off() {
@@ -136,7 +134,7 @@ LedLight reversingLight(REVERSING_LIGHT_PIN);
 LedLight sideLight(SIDELIGHT_PIN);
 
 
-// Read 18650 lipo battery voltage
+// Read 18650 battery voltage
 // This works, by connecting an additional 100 kΩ resistor between the battery positive (+) and the A0 pin.
 // Also, there needs to be a voltage divider of a 220 kΩ and 100 kΩ already in place (which many dev boards have).
 // Setup: [Battery +] -----(100 kΩ)----- [A0 Pin] -----(220 kΩ)----- [ADC] -----(100 kΩ)----- [GND]
@@ -221,7 +219,7 @@ void onTrailerDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
   } else {
     turnOffLights();
   }
-  
+
 }
 
 
