@@ -30,7 +30,7 @@ const float codeVersion = 0.5; // Software revision
 
 TickerScheduler ts(2);  // Scheduler used for switch periodic detection
 
-// This struct contains the data transmitted from the main controller unit
+// This struct is used as a container of the data transmitted from the main controller unit
 typedef struct struct_message {
   uint8_t tailLight;
   uint8_t sideLight;
@@ -58,6 +58,8 @@ float adcVoltValue;
 
 #endif
 
+// Used for managing the LED lights available
+// Each object represents a distinct type of light (like tail lights, for example)
 class LedLight {
   public:
     LedLight(uint8_t pin) {
@@ -135,6 +137,10 @@ LedLight sideLight(SIDELIGHT_PIN);
 
 
 // Read 18650 lipo battery voltage
+// This works, by connecting an additional 100 kΩ resistor between the battery positive (+) and the A0 pin.
+// Also, there needs to be a voltage divider of a 220 kΩ and 100 kΩ already in place (which many dev boards have).
+// Setup: [Battery +] -----(100 kΩ)----- [A0 Pin] -----(220 kΩ)----- [ADC] -----(100 kΩ)----- [GND]
+// Note: The ADC of the ESP8266 is very basic and not very precise, don't expect too much!
 void readBatteryVoltage() {
 
   int raw = analogRead(A0);
@@ -152,6 +158,7 @@ void readBatteryVoltage() {
 
 
 // Detect state of coupler switch (NO to GND)
+// When the trailer is coupled to the truck, the switch should be closed.
 void switchDetect() {
 
   static unsigned long switchMillis;
@@ -199,7 +206,7 @@ void turnOnLights() {
 }
 
 // Callback function that will be run when LEDs lights data is received
-void onDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
+void onTrailerDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 
 #ifdef DEBUG_MODE
 
@@ -237,17 +244,17 @@ void setupEspNow() {
   }
 
   // Function to call when receiving data
-  esp_now_register_recv_cb(onDataReceive);
+  esp_now_register_recv_cb(onTrailerDataReceive);
 }
 
 
 // Main setup, runs only once
 void setup() {
 
-  pinMode(COUPLER_SWITCH_PIN, INPUT);
-  pinMode(A0, INPUT);
+  pinMode(COUPLER_SWITCH_PIN, INPUT);  // Additional 10k pull up resistor in place
+  pinMode(A0, INPUT);  // Connected to Battery + using a 100 kΩ resistor (see function above).
 
-  Serial.begin(115200); // USB serial (mainly for DEBUG)
+  Serial.begin(115200); // USB serial monitor (mainly for DEBUG)
 
   // Short LEDs test
   indicatorL.on();
@@ -261,7 +268,7 @@ void setup() {
   Serial.printf("CPU Clock: %i Mhz, Free RAM: %i Byte, Free flash memory: %i Byte\n", ESP.getCpuFreqMHz(), ESP.getFreeHeap(), ESP.getFreeSketchSpace());
   Serial.printf("Last reset reason: %s\n", ESP.getResetReason().c_str());
   Serial.printf("Trailer MAC address: %s\n", WiFi.macAddress().c_str());
-  readBatteryVoltage();
+  readBatteryVoltage();  // Read once, since periodic task is not running yet.
   Serial.printf("Battery voltage: %.2f V\n\n", batteryVoltage);
   Serial.printf("Add or replace the MAC address of this device in '10_adjustmentsTrailer.h' file of the main controller:\n");
   {
