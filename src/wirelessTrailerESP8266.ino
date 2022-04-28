@@ -9,7 +9,9 @@ const float codeVersion = 0.5; // Software revision
 #include <Esp.h>
 #include <TickerScheduler.h>
 
-//#define DEBUG_MODE
+#define LIGHTS_TEST_MODE  // Turn on all the lights on startup instead of just the indicators.
+
+//#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
 
 // PINs used for LED lights and coupler switch
 #define TAILLIGHT_PIN 14 // (D5) Red tail- & brake-lights (combined)
@@ -18,7 +20,7 @@ const float codeVersion = 0.5; // Software revision
 #define REVERSING_LIGHT_PIN 2 // (D4) White reversing light (also connected to onboard LED)
 #define SIDELIGHT_PIN 13 // (D7) Side lights
 
-#define COUPLER_SWITCH_PIN 12 // (D6) This NO switch is closed, if the trailer is coupled to the 5th wheel. Connected between Pin 16 and GND.
+#define COUPLER_SWITCH_PIN 12 // (D6) This switch is closed, if the trailer is coupled to the 5th wheel. Connected between this PIN and GND.
 
 // Used for analogWrite()
 #define PWM_MIN 0
@@ -73,6 +75,24 @@ class LedLight {
       _writeOut();
     }
 
+    void off() {
+      _pwmValue = PWM_MIN;
+      _writeOut();
+    }
+
+    void on(unsigned long onMillis) {
+      on();
+      delay(onMillis);
+      off();
+    }
+
+    void on(unsigned long onMillis, unsigned long waitMillis) {
+      on();
+      delay(onMillis);
+      off();
+      delay(waitMillis);
+    }
+
     uint16_t pwm() {
       return _pwmValue;
     }
@@ -93,11 +113,6 @@ class LedLight {
           _pwmValue = pwmValue;
           _writeOut();
         }
-    }
-
-    void off() {
-      _pwmValue = PWM_MIN;
-      _writeOut();
     }
 
     bool isOn() {
@@ -203,6 +218,24 @@ void turnOnLights() {
 
 }
 
+
+void shortLightsTest() {
+
+  indicatorL.on(500);
+  indicatorR.on(500, 500);
+
+}
+
+
+void longLightsTest() {
+
+  shortLightsTest();
+  tailLight.on(500, 500);
+  reversingLight.on(500, 500);
+  sideLight.on(500);
+}
+
+
 // Callback function that will be run when LEDs lights data is received
 void onTrailerDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 
@@ -254,12 +287,16 @@ void setup() {
 
   Serial.begin(115200); // USB serial monitor (mainly for DEBUG)
 
-  // Short LEDs test
-  indicatorL.on();
-  indicatorR.on();
-  delay(2000);
-  indicatorL.off();
-  indicatorR.off();
+  
+#ifdef LIGHTS_TEST_MODE
+
+  longLightsTest();
+
+#else
+
+  shortLightsTest();
+
+#endif
 
   Serial.printf("Wireless ESP-NOW Trailer Client for ESP8266 version %.1f\n", codeVersion);
   Serial.printf("https://github.com/TheDIYGuy999/Rc_Engine_Sound_ESP32\n");
