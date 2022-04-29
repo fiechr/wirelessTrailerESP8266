@@ -80,12 +80,14 @@ class LedLight {
       _writeOut();
     }
 
+    // Ugly, blocking, but seems ok in this case
     void on(unsigned long onMillis) {
       on();
       delay(onMillis);
       off();
     }
 
+    // Ugly, blocking, but seems ok in this case
     void on(unsigned long onMillis, unsigned long waitMillis) {
       on();
       delay(onMillis);
@@ -147,6 +149,14 @@ LedLight indicatorL(INDICATOR_L_PIN);
 LedLight indicatorR(INDICATOR_R_PIN);
 LedLight reversingLight(REVERSING_LIGHT_PIN);
 LedLight sideLight(SIDELIGHT_PIN);
+
+
+// Called when switch pin changes state
+// void IRAM_ATTR onCouplerSwitchChangeInterrupt() {
+  
+//   trailerCoupled = digitalRead(COUPLER_SWITCH_PIN) == LOW;
+
+// }
 
 
 // Read 18650 battery voltage
@@ -230,6 +240,10 @@ void shortLightsTest() {
 void longLightsTest() {
 
   shortLightsTest();
+  indicatorL.on();
+  indicatorR.on();
+  delay(500);
+  turnOffLights();
   tailLight.on(500, 500);
   reversingLight.on(500, 500);
   sideLight.on(500);
@@ -282,8 +296,11 @@ void setupEspNow() {
 // Main setup, runs only once
 void setup() {
 
-  pinMode(COUPLER_SWITCH_PIN, INPUT);  // Additional 10k pull up resistor in place
+  pinMode(COUPLER_SWITCH_PIN, INPUT_PULLUP);  // Additional 10k pull up resistor in place
   pinMode(A0, INPUT);  // Connected to Battery + using a 100 kΩ resistor (see function above).
+
+  // Use interrupt instead of polling the switch
+  //attachInterrupt(digitalPinToInterrupt(COUPLER_SWITCH_PIN), onCouplerSwitchChangeInterrupt, CHANGE);
 
   Serial.begin(115200); // USB serial monitor (mainly for DEBUG)
 
