@@ -8,10 +8,11 @@ const float codeVersion = 0.5; // Software revision
 #include <espnow.h>
 #include <Esp.h>
 #include <TickerScheduler.h>
+#include <EasyButton.h>
 
 #define LIGHTS_TEST_MODE  // Turn on all the lights on startup instead of just the indicators.
 
-//#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
+#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
 
 // PINs used for LED lights and coupler switch
 #define TAILLIGHT_PIN 14 // (D5) Red tail- & brake-lights (combined)
@@ -20,6 +21,7 @@ const float codeVersion = 0.5; // Software revision
 #define REVERSING_LIGHT_PIN 2 // (D4) White reversing light (also connected to onboard LED)
 #define SIDELIGHT_PIN 13 // (D7) Side lights
 
+#define FLASH_BUTTON_PIN 0 // (D3) "Flash" labeled button used for other means
 #define COUPLER_SWITCH_PIN 12 // (D6) This switch is closed, if the trailer is coupled to the 5th wheel. Connected between this PIN and GND.
 
 // Used for analogWrite()
@@ -31,6 +33,8 @@ const float codeVersion = 0.5; // Software revision
 #define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s
 
 TickerScheduler ts(2);  // Scheduler used for switch periodic detection
+
+EasyButton flashButton(FLASH_BUTTON_PIN);
 
 // This struct is used as a container of the data transmitted from the main controller unit
 typedef struct struct_message {
@@ -151,6 +155,11 @@ LedLight reversingLight(REVERSING_LIGHT_PIN);
 LedLight sideLight(SIDELIGHT_PIN);
 
 
+// Used by EasyButton library
+void IRAM_ATTR flashButtonInterrupt() {
+  flashButton.read();
+}
+
 // Called when switch pin changes state
 // void IRAM_ATTR onCouplerSwitchChangeInterrupt() {
   
@@ -195,6 +204,16 @@ void switchDetect() {
 }
 
 
+// When the onboard "Flash" labeled button is pressed
+void onFlashButtonPressed() {
+#ifdef DEBUG_MODE
+
+    Serial.printf("Flash button was pressed!\n");
+
+#endif
+}
+
+
 // Show LEDs using the received ESP-NOW data
 void showLights() {
 
@@ -229,6 +248,7 @@ void turnOnLights() {
 }
 
 
+// Shortly turn on indicator lights, first left, then right
 void shortLightsTest() {
 
   indicatorL.on(500);
@@ -237,6 +257,7 @@ void shortLightsTest() {
 }
 
 
+// Shortly turn on every light in sequence
 void longLightsTest() {
 
   shortLightsTest();
@@ -297,6 +318,7 @@ void setupEspNow() {
 void setup() {
 
   pinMode(COUPLER_SWITCH_PIN, INPUT_PULLUP);  // Additional 10k pull up resistor in place
+  pinMode(FLASH_BUTTON_PIN, INPUT_PULLUP);  // "Flash" button to user for other stuff
   pinMode(A0, INPUT);  // Connected to Battery + using a 100 kΩ resistor (see function above).
 
   // Use interrupt instead of polling the switch
@@ -304,7 +326,6 @@ void setup() {
 
   Serial.begin(115200); // USB serial monitor (mainly for DEBUG)
 
-  
 #ifdef LIGHTS_TEST_MODE
 
   longLightsTest();
@@ -327,6 +348,20 @@ void setup() {
     uint8_t mac[6];
     WiFi.macAddress(mac);
     Serial.printf("  uint8_t broadcastAddress1[] = { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X };\n\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  }
+
+  // Use "Flash" labeled button for other purposes
+  flashButton.begin();
+  flashButton.onPressed(onFlashButtonPressed);
+  if (flashButton.supportsInterrupt()) {
+    flashButton.enableInterrupt(flashButtonInterrupt);
+
+#ifdef DEBUG_MODE
+
+    Serial.printf("Interrupt attached for Flash button\n");
+
+#endif
+
   }
 
   setupEspNow();
