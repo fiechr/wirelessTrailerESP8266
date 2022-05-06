@@ -1,5 +1,23 @@
-/* Trailer for RC engine sound & LED controller for Arduino ESP8266. Based on the code written by TheDIYGuy999*/
-/* https://github.com/TheDIYGuy999/Rc_Engine_Sound_ESP32 */
+/*
+Trailer for RC engine sound & LED controller for Arduino ESP8266 by neo2001.
+Based on the code written by TheDIYGuy999: https://github.com/TheDIYGuy999/Rc_Engine_Sound_ESP32
+*/
+
+/*
+Sketch for a ESP8266 to switch the lights on the trailer according to the data, received
+via ESP-NOW, from the ESP32 main controller (usually mounted on the truck).
+
+Please note, that this sketch does NOT support connecting servos or ESCs (for legs, ramps, winches), only lights!
+
+Pressing the "FLash" (or "Boot") labeled button on the dev kit PCB will cycle through all lights
+and then return back to receiving ESP-NOW data.
+
+The trailer presence switch, if open, disables the LEDs entirely until coupled (switch closed).
+Bridge the contacts if there isn't a switch on your trailer!
+
+TODO: Testing timeout, disable WiFi/ESP-NOW if trailer switch is open
+
+*/
 
 const float codeVersion = 0.6; // Software revision
 
