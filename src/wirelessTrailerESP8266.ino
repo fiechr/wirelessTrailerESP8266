@@ -1,7 +1,7 @@
 /* Trailer for RC engine sound & LED controller for Arduino ESP8266. Based on the code written by TheDIYGuy999*/
 /* https://github.com/TheDIYGuy999/Rc_Engine_Sound_ESP32 */
 
-const float codeVersion = 0.5; // Software revision
+const float codeVersion = 0.6; // Software revision
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -10,7 +10,7 @@ const float codeVersion = 0.5; // Software revision
 #include <TickerScheduler.h>
 #include <EasyButton.h>
 
-#define LIGHTS_TEST_MODE  // Turn on all the lights on startup instead of just the indicators.
+#define LONG_LIGHTS_TEST  // If set, turn on all the lights in sequence, on startup, instead of just the indicators.
 
 #define DEBUG_MODE  // Print additional debug messages to the serial monitor.
 
@@ -21,31 +21,44 @@ const float codeVersion = 0.5; // Software revision
 #define REVERSING_LIGHT_PIN 2 // (D4) White reversing light (also connected to onboard LED)
 #define SIDELIGHT_PIN 13 // (D7) Side lights
 
-#define FLASH_BUTTON_PIN 0 // (D3) "Flash" labeled button used for other means
+#define FLASH_BUTTON_PIN 0 // (D3) "Flash" labeled button for switching running mode (testing lights).
 #define COUPLER_SWITCH_PIN 12 // (D6) This switch is closed, if the trailer is coupled to the 5th wheel. Connected between this PIN and GND.
 
 // Used for analogWrite()
 #define PWM_MIN 0
 #define PWM_MAX 1023
 
-#define SWITCH_DETECT_MS 500 // Detect state of the coupler switch every 0.5 s
+#define SWITCH_DETECT_MS 500 // Detect state of the coupler switch every 0.5 s.
 
-#define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s
+#define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s.
 
-TickerScheduler ts(2);  // Scheduler used for switch periodic detection
+// Possible states/values for the runningMode variable below.
+enum RunningMode {
+  MODE_RECEIVING,
+  MODE_TEST_INDICATORSLEFT,
+  MODE_TEST_INDICATORSRIGHT,
+  MODE_TEST_TAILLIGHT,
+  MODE_TEST_REVERSINGLIGHT,
+  MODE_TEST_SIDELIGHT,
+  NUM_RUNNING_MODES
+};
+
+volatile RunningMode runningMode;  // Will store the current running mode.
+
+TickerScheduler ts(2);  // Scheduler used for switch periodic detection.
 
 EasyButton flashButton(FLASH_BUTTON_PIN);
 
-// This struct is used as a container of the data transmitted from the main controller unit
-typedef struct struct_message {
+// This struct is used as a container of the data transmitted from the main controller unit.
+typedef struct TrailerData {
   uint8_t tailLight;
   uint8_t sideLight;
   uint8_t reversingLight;
   uint8_t indicatorL;
   uint8_t indicatorR;
-} struct_message;
+} TrailerData;
 
-struct_message trailerData;
+TrailerData trailerData;
 
 const float batteryVoltageOffset = -0.135;
 float batteryVoltage;
@@ -122,11 +135,11 @@ class LedLight {
     }
 
     bool isOn() {
-      return _pwmValue > 0;
+      return (_pwmValue > 0);
     }
 
     bool isOff() {
-      return _pwmValue == 0;
+      return (_pwmValue == 0);
     }
 
     void toggle() {
@@ -147,7 +160,7 @@ class LedLight {
 };
 
 
-// Lights available on the trailer
+// Lights available on the trailer.
 LedLight tailLight(TAILLIGHT_PIN);
 LedLight indicatorL(INDICATOR_L_PIN);
 LedLight indicatorR(INDICATOR_R_PIN);
@@ -155,12 +168,12 @@ LedLight reversingLight(REVERSING_LIGHT_PIN);
 LedLight sideLight(SIDELIGHT_PIN);
 
 
-// Used by EasyButton library
+// Used by EasyButton library.
 void IRAM_ATTR flashButtonInterrupt() {
   flashButton.read();
 }
 
-// Called when switch pin changes state
+// Called when switch pin changes state.
 // void IRAM_ATTR onCouplerSwitchChangeInterrupt() {
   
 //   trailerCoupled = digitalRead(COUPLER_SWITCH_PIN) == LOW;
@@ -199,22 +212,25 @@ void switchDetect() {
     switchMillis = millis();
   }
 
-  trailerCoupled = (millis() - switchMillis <= 1000); // 1s delay, if not coupled (yet)
+  trailerCoupled = ((millis() - switchMillis) <= 1000); // 1s delay, if not coupled (yet)
 
 }
 
 
-// When the onboard "Flash" labeled button is pressed
+// When the onboard "Flash" or "Boot" labeled button is pressed.
 void onFlashButtonPressed() {
 #ifdef DEBUG_MODE
 
-    Serial.printf("Flash button was pressed!\n");
+  Serial.printf("'Flash'/'Boot' button was pressed.\n");
 
 #endif
+
+  runningMode = (RunningMode)((runningMode + 1) % NUM_RUNNING_MODES);  // Switch to next running mode or back to zero.
+
 }
 
 
-// Show LEDs using the received ESP-NOW data
+// Turn on/pwm/off LEDs using the received ESP-NOW data.
 void showLights() {
 
   tailLight.pwm(trailerData.tailLight);
@@ -226,6 +242,7 @@ void showLights() {
 }
 
 
+// Turn off all lights at once.
 void turnOffLights() {
 
   tailLight.off();
@@ -237,6 +254,7 @@ void turnOffLights() {
 }
 
 
+// Turn on all lights at the same time.
 void turnOnLights() {
 
   tailLight.on();
@@ -248,7 +266,7 @@ void turnOnLights() {
 }
 
 
-// Shortly turn on indicator lights, first left, then right
+// Shortly turn on indicator lights, first left, then right.
 void shortLightsTest() {
 
   indicatorL.on(500);
@@ -257,7 +275,7 @@ void shortLightsTest() {
 }
 
 
-// Shortly turn on every light in sequence
+// Shortly turn on every light in sequence.
 void longLightsTest() {
 
   shortLightsTest();
@@ -268,6 +286,7 @@ void longLightsTest() {
   tailLight.on(500, 500);
   reversingLight.on(500, 500);
   sideLight.on(500);
+
 }
 
 
@@ -291,7 +310,7 @@ void onTrailerDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 }
 
 
-// ESP-NOW setup for receiving LEDs lights data from main controller (usually on the truck)
+// Enable WiFi adapter and ESP-NOW
 void setupEspNow() {
 
   WiFi.disconnect();
@@ -304,13 +323,57 @@ void setupEspNow() {
   WiFi.setOutputPower(0);
 
   // Init ESP-NOW and return if not successfull
-  if (esp_now_init() != 0) {
-    Serial.printf("Error initializing ESP-NOW! I give up.\n");
+  if (esp_now_init() == 0) {
+    Serial.printf("ESP-NOW enabled.\n");
+  } else {
+    Serial.printf("Error initializing ESP-NOW!\n");
     return;
   }
+  
+}
 
-  // Function to call when receiving data
+
+// Disable ESP-NOW and turn WiFi adapter off
+void disableEspNow() {
+
+  esp_now_unregister_recv_cb();
+  if (esp_now_deinit() == 0) {
+    Serial.printf("ESP-NOW disabled.\n");
+  } else {
+    Serial.printf("Error disabling ESP-NOW!\n");
+  }
+  WiFi.disconnect();
+  WiFi.mode(WIFI_OFF);
+
+}
+
+
+// Pause receiving (and showing) lights data, but leave ESP-NOW enabled
+void pauseReceiving() {
+  esp_now_unregister_recv_cb();
+  delay(300);
+  turnOffLights();
+
+#ifdef DEBUG_MODE
+
+  Serial.printf("Pausing processing ESP-NOW data.\n");
+
+#endif
+
+}
+
+
+// Continue receiving (and showing) lights data
+void continueReceiving() {
+  turnOffLights();
   esp_now_register_recv_cb(onTrailerDataReceive);
+
+#ifdef DEBUG_MODE
+
+  Serial.printf("Continuing processing ESP-NOW data.\n");
+
+#endif
+
 }
 
 
@@ -326,7 +389,7 @@ void setup() {
 
   Serial.begin(115200); // USB serial monitor (mainly for DEBUG)
 
-#ifdef LIGHTS_TEST_MODE
+#ifdef LONG_LIGHTS_TEST
 
   longLightsTest();
 
@@ -358,13 +421,14 @@ void setup() {
 
 #ifdef DEBUG_MODE
 
-    Serial.printf("Interrupt attached for Flash button\n");
+    Serial.printf("Interrupt attached to 'Flash'/'Boot' button\n");
 
 #endif
 
   }
 
   setupEspNow();
+  runningMode = MODE_RECEIVING;
 
   ts.add(0, SWITCH_DETECT_MS, [&](void *) { switchDetect(); }, nullptr, true); // Add scheduler for switch detection every SWITCH_DETECT_MS ms
   ts.add(1, READ_BATTERY_VOLTAGE_MS, [&](void *) { readBatteryVoltage(); }, nullptr, true); // Add scheduler for reading battery voltage every READ_BATTERY_VOLTAGE_MS ms
@@ -375,12 +439,67 @@ void setup() {
 // Main loop running forever
 void loop() {
 
+  static RunningMode lastState = NUM_RUNNING_MODES;
+
   ts.update();  // TickerScheduler
+
+  if (runningMode != lastState) {
+
+#ifdef DEBUG_MODE
+
+    Serial.printf("Running mode changed from %d to %d.\n", lastState, runningMode);
+
+#endif
+
+    lastState = runningMode;
+
+    switch(runningMode) {
+
+      case MODE_RECEIVING:
+        continueReceiving();
+        break;
+
+      case MODE_TEST_INDICATORSLEFT:
+        pauseReceiving();
+        indicatorL.on();
+        break;
+
+      case MODE_TEST_INDICATORSRIGHT:
+        pauseReceiving();
+        indicatorR.on();
+        break;
+
+      case MODE_TEST_TAILLIGHT:
+        pauseReceiving();
+        tailLight.on();
+        break;
+      
+      case MODE_TEST_REVERSINGLIGHT:
+        pauseReceiving();
+        reversingLight.on();
+        break;
+      
+      case MODE_TEST_SIDELIGHT:
+        pauseReceiving();
+        sideLight.on();
+        break;
+
+      case NUM_RUNNING_MODES:  // Theoretically, this should never be reached, because button resets to 0 first.
+        runningMode = MODE_RECEIVING;
+        break;
+
+      default:
+        runningMode = MODE_RECEIVING;
+
+    }
+
+  }
 
 #ifdef DEBUG_MODE
 
   if (millis() - lastDebugMillis > 3000) {
     Serial.printf("DEBUG_MODE:\n");
+    Serial.printf("Current running mode  : %d\n", runningMode);
     Serial.printf("Battery voltage       : %.2f V (adcVoltValue: %.4f, batteryVoltageOffset: %.4f, adcRawValue: %i)\n", batteryVoltage, adcVoltValue, batteryVoltageOffset, adcRawValue);
     Serial.printf("Coupler switch        : %s\n", trailerCoupled ? "closed" : "open");
     Serial.printf("Taillights (TL)       : %i (received value: %i)\n", tailLight.pwm(), trailerData.tailLight);
