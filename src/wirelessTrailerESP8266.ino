@@ -32,7 +32,7 @@ const float CODE_VERSION = 0.6; // Software revision
 #define LIGHTS_TEST_ON_MILLIS 500
 #define LIGHTS_TEST_WAIT_MILLIS 500
 
-#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
+//#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
 
 // PINs used for LED lights and coupler switch
 #define TAILLIGHT_PIN 14 // (D5) Red tail- & brake-lights (combined)
