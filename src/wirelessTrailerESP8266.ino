@@ -55,11 +55,13 @@ const float CODE_VERSION = 0.6; // Software revision
 // Possible states/values for the runningMode variable below.
 enum RunningMode {
   MODE_RECEIVING,
-  MODE_TEST_INDICATORSLEFT,
-  MODE_TEST_INDICATORSRIGHT,
+  MODE_TEST_INDICATORS_LEFT,
+  MODE_TEST_INDICATORS_RIGHT,
+  MODE_TEST_INDICATORS_BOTH,
   MODE_TEST_TAILLIGHT,
   MODE_TEST_REVERSINGLIGHT,
   MODE_TEST_SIDELIGHT,
+  MODE_TEST_ALL_LIGHTS,
   NUM_RUNNING_MODES
 };
 
@@ -86,12 +88,12 @@ const float BATTERY_VOLTAGE_OFFSET = -0.135;
 float batteryVoltage;
 
 bool trailerCoupled;  // This is true, when the trailer is coupled (NO switch closed to GND)
-#define COUPLER_SWITCH_UNCOUPLED_DELAY 1000
+#define COUPLER_SWITCH_UNCOUPLED_DELAY 1500  // Time switch needs to be open to be considered "uncoupled"
 
 #ifdef DEBUG_MODE
 
 // Used for debugging purposes
-const unsigned long PRINT_DEBUG_DELAY_MILLIS = 3000;  // 3s delay between debug output message block
+const unsigned long PRINT_DEBUG_DELAY_MILLIS = 5000;  // 5 s delay between debug output message block
 volatile uint16_t espNowMessagesReceived = 0;
 
 int adcRawValue;
@@ -228,7 +230,7 @@ void readBatteryVoltage() {
 
 
 // Detect state of coupler switch (NO to GND).
-// When the trailer is coupled to the truck, the switch needs to be closed.
+// When the trailer is coupled to the truck, the switch needs to be closed (LOW).
 void couplerSwitchDetect() {
 
   static unsigned long switchMillis = millis();
@@ -237,7 +239,7 @@ void couplerSwitchDetect() {
     switchMillis = millis();
   }
 
-  trailerCoupled = ((millis() - switchMillis) <= COUPLER_SWITCH_UNCOUPLED_DELAY);  // At leas 1 s delay before uncoupled state.
+  trailerCoupled = ((millis() - switchMillis) <= COUPLER_SWITCH_UNCOUPLED_DELAY);  // Introduce some delay before uncoupled state.
 
 }
 
@@ -514,15 +516,22 @@ void loop() {
         continueReceiving();
         break;
 
-      case MODE_TEST_INDICATORSLEFT:
+      case MODE_TEST_INDICATORS_LEFT:
         pauseReceiving();
         turnOffLights();
         indicatorL.on();
         break;
 
-      case MODE_TEST_INDICATORSRIGHT:
+      case MODE_TEST_INDICATORS_RIGHT:
         pauseReceiving();
         turnOffLights();
+        indicatorR.on();
+        break;
+
+      case MODE_TEST_INDICATORS_BOTH:
+        pauseReceiving();
+        turnOffLights();
+        indicatorL.on();
         indicatorR.on();
         break;
 
@@ -544,6 +553,11 @@ void loop() {
         sideLight.on();
         break;
 
+      case MODE_TEST_ALL_LIGHTS:
+        pauseReceiving();
+        turnOnLights();
+        break;
+
       default:  // Theoretically, this should never be reached, because button resets to 0 first.
         runningMode = MODE_RECEIVING;
 
@@ -556,7 +570,7 @@ void loop() {
   if (millis() - lastDebugMillis > PRINT_DEBUG_DELAY_MILLIS) {
     Serial.printf("DEBUG_MODE:\n");
     Serial.printf("Current running mode  : %d\n", runningMode);
-    Serial.printf("Coupler switch        : %s\n", digitalRead(COUPLER_SWITCH_PIN) == LOW ? "closed" : "open");
+    Serial.printf("Coupler switch        : %s\n", (digitalRead(COUPLER_SWITCH_PIN) == LOW) ? "closed" : "open");
     Serial.printf("Trailer coupled state : %s\n", trailerCoupled ? "coupled" : "uncoupled");
     Serial.printf("ESP-NOW state:        : %s\n", espNowEnabled ? "enabled" : "disabled");
     Serial.printf("ESP-NOW message count : %i (last %is)\n", espNowMessagesReceived, (uint8_t)(PRINT_DEBUG_DELAY_MILLIS/1000.0));
