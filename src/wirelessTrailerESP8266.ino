@@ -31,26 +31,28 @@ const float CODE_VERSION = 0.6; // Software revision
 //#define LONG_LIGHTS_TEST  // If set, turn on all the lights in sequence, on startup, instead of just the indicators.
 #define LIGHTS_TEST_ON_MILLIS 500
 #define LIGHTS_TEST_WAIT_MILLIS 500
+#define LIGHTS_BLINK_TIMES 3
 
-//#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
+#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
 
 // PINs used for LED lights and coupler switch
-#define TAILLIGHT_PIN 14 // (D5) Red tail- & brake-lights (combined)
-#define INDICATOR_L_PIN 5 // (D1) Orange left indicator (turn signal) light
-#define INDICATOR_R_PIN 4 // (D2) Orange right indicator (turn signal) light
-#define REVERSING_LIGHT_PIN 2 // (D4) White reversing light (also connected to onboard LED)
-#define SIDELIGHT_PIN 13 // (D7) Side lights
+#define TAILLIGHT_PIN 14  // (D5) Red tail- & brake-lights (combined)
+#define INDICATOR_L_PIN 5  // (D1) Orange left indicator (turn signal) light
+#define INDICATOR_R_PIN 4  // (D2) Orange right indicator (turn signal) light
+#define REVERSING_LIGHT_PIN 2  // (D4) White reversing light (also connected to onboard LED)
+#define SIDELIGHT_PIN 13  // (D7) Side lights
 
-#define FLASH_BUTTON_PIN 0 // (D3) "Flash" labeled button for switching running mode (testing lights).
-#define COUPLER_SWITCH_PIN 12 // (D6) This switch is closed, if the trailer is coupled to the 5th wheel. Connected between this PIN and GND.
+#define FLASH_BUTTON_PIN 0  // (D3) "Flash" labeled button for switching running mode (testing lights).
+#define COUPLER_SWITCH_PIN 12  // (D6) This switch is closed, if the trailer is coupled to the 5th wheel. Connected between this PIN and GND.
 
 // Used for analogWrite()
 #define PWM_MIN 0
 #define PWM_MAX 1023
 
-#define SWITCH_DETECT_MS 500 // Detect state of the coupler switch every 0.5 s.
-
+#define SWITCH_DETECT_MS 500  // Detect state of the coupler switch every 0.5 s.
 #define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s.
+#define TIMEOUT_TEST_MODES_S 300  // Time after which to returning automatically to MODE_RECEIVING.
+#define TIMEOUT_ESP_NOW_S 600  // Seconds until ESP-NOW should timeout.
 
 // Possible states/values for the runningMode variable below.
 enum RunningMode {
@@ -66,12 +68,11 @@ enum RunningMode {
 };
 
 volatile RunningMode runningMode;  // Will store the current running mode.
-
-volatile bool espNowEnabled;
+volatile bool espNowEnabled;  // Set to true, if ESP-NOW was successfully initialized.
+volatile uint16_t espNowMessagesReceived;  // Set to true, if TIMEOUT_S has elapsed without any running mode changes.
 
 TickerScheduler ts(2);  // Scheduler used for switch periodic detection.
-
-EasyButton flashButton(FLASH_BUTTON_PIN);
+EasyButton flashButton(FLASH_BUTTON_PIN);  // Used to trigger next running mode.
 
 // This struct is used as a container of the data transmitted from the main controller unit.
 typedef struct TrailerData {
@@ -85,7 +86,8 @@ typedef struct TrailerData {
 TrailerData trailerData;
 
 const float BATTERY_VOLTAGE_OFFSET = -0.135;
-float batteryVoltage;
+const float BATTERY_WARNING_VOLTAGE = 3.5;  // Threshold voltage for voltage considered critical.
+float batteryVoltage;  // Holds the current battery voltage.
 
 bool trailerCoupled;  // This is true, when the trailer is coupled (NO switch closed to GND)
 #define COUPLER_SWITCH_UNCOUPLED_DELAY 1500  // Time switch needs to be open to be considered "uncoupled"
@@ -94,7 +96,6 @@ bool trailerCoupled;  // This is true, when the trailer is coupled (NO switch cl
 
 // Used for debugging purposes
 const unsigned long PRINT_DEBUG_DELAY_MILLIS = 5000;  // 5 s delay between debug output message block
-volatile uint16_t espNowMessagesReceived = 0;
 
 int adcRawValue;
 float adcVoltValue;
@@ -121,14 +122,14 @@ class LedLight {
       _writeOut();
     }
 
-    // Ugly, blocking, but seems ok in this case
+    // Ugly, blocking, but seems ok in this case (nothing else happening on startup anyways).
     void on(unsigned long onMillis) {
       on();
       delay(onMillis);
       off();
     }
 
-    // Ugly, blocking, but seems ok in this case
+    // Ugly, blocking, but seems ok in this case (nothing else happening on startup anyways).
     void on(unsigned long onMillis, unsigned long waitMillis) {
       on();
       delay(onMillis);
@@ -218,6 +219,10 @@ void readBatteryVoltage() {
   int raw = analogRead(A0);
   float volt = raw / 1023.0;
   batteryVoltage = (volt * 4.2) + BATTERY_VOLTAGE_OFFSET;
+
+  if (batteryVoltage < 0) {
+    batteryVoltage = 0;
+  }
 
 #ifdef DEBUG_MODE
 
@@ -314,6 +319,14 @@ void longLightsTest() {
   reversingLight.on(LIGHTS_TEST_ON_MILLIS, LIGHTS_TEST_WAIT_MILLIS);
   sideLight.on(LIGHTS_TEST_ON_MILLIS);
 
+}
+
+// Blink red taillights.
+void blinkTailLights() {
+  turnOffLights();
+  for (uint8_t i; i < LIGHTS_BLINK_TIMES; i++) {
+    tailLight.on(LIGHTS_TEST_ON_MILLIS, LIGHTS_TEST_WAIT_MILLIS);
+  }
 }
 
 
@@ -445,6 +458,11 @@ void setup() {
     Serial.printf("  uint8_t broadcastAddress1[] = { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X };\n\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 
+  // Consider battery voltage and warn if low
+  if (batteryVoltage < BATTERY_WARNING_VOLTAGE) {
+    blinkTailLights();
+  }
+
   // Use "Flash" labeled button for other purposes
   flashButton.begin();
   flashButton.onPressed(onFlashButtonPressed);
@@ -471,6 +489,7 @@ void setup() {
 void loop() {
 
   static RunningMode runningModeBefore = NUM_RUNNING_MODES;
+  static unsigned long lastModeChangeMillis = millis();
   static bool trailerCoupledBefore = !trailerCoupled;
 
 #ifdef DEBUG_MODE
@@ -481,6 +500,7 @@ void loop() {
 
   ts.update();  // TickerScheduler
 
+
   if (trailerCoupled != trailerCoupledBefore) {  // If state of trailer changed
 
 #ifdef DEBUG_MODE
@@ -490,14 +510,14 @@ void loop() {
 #endif
 
     trailerCoupledBefore = trailerCoupled;
-
     if (trailerCoupled) {
       setupEspNow();
     } else {
       disableEspNow();
     }
 
-  }
+  }  // If state of trailer changed
+
 
   if (runningMode != runningModeBefore) {  // If running mode changed
 
@@ -507,6 +527,7 @@ void loop() {
 
 #endif
 
+    lastModeChangeMillis = millis();
     runningModeBefore = runningMode;
 
     switch(runningMode) {
@@ -563,17 +584,27 @@ void loop() {
 
     }
 
-  }
+  } else {  // If running mode did NOT change.
+
+    if (millis() - lastModeChangeMillis > TIMEOUT_TEST_MODES_S * 1000) {  // If timeout has been reached.
+      if (runningMode != MODE_RECEIVING) {
+        runningMode = MODE_RECEIVING;
+      }
+    }
+
+  }  // If running mode changed (or not)
+
 
 #ifdef DEBUG_MODE
 
   if (millis() - lastDebugMillis > PRINT_DEBUG_DELAY_MILLIS) {
     Serial.printf("DEBUG_MODE:\n");
-    Serial.printf("Current running mode  : %d\n", runningMode);
+    Serial.printf("Current running mode  : %i\n", runningMode);
+    Serial.printf("Last mode change at   : %lu ms (%.1f s ago)\n", lastModeChangeMillis, (millis() - lastModeChangeMillis) / 1000.0);
     Serial.printf("Coupler switch        : %s\n", (digitalRead(COUPLER_SWITCH_PIN) == LOW) ? "closed" : "open");
     Serial.printf("Trailer coupled state : %s\n", trailerCoupled ? "coupled" : "uncoupled");
     Serial.printf("ESP-NOW state:        : %s\n", espNowEnabled ? "enabled" : "disabled");
-    Serial.printf("ESP-NOW message count : %i (last %is)\n", espNowMessagesReceived, (uint8_t)(PRINT_DEBUG_DELAY_MILLIS/1000.0));
+    Serial.printf("ESP-NOW message count : %i\n", espNowMessagesReceived);
     Serial.printf("Battery voltage       : %.2f V (adcVoltValue: %.4f, BATTERY_VOLTAGE_OFFSET: %.4f, adcRawValue: %i)\n\n", batteryVoltage, adcVoltValue, BATTERY_VOLTAGE_OFFSET, adcRawValue);
 
     Serial.printf("Taillights (TL)       : %i (received value: %i)\n", tailLight.pwm(), trailerData.tailLight);
@@ -584,7 +615,6 @@ void loop() {
 
 
     lastDebugMillis = millis();
-    espNowMessagesReceived = 0;
   }
 
 #endif
