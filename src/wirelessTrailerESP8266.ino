@@ -63,7 +63,7 @@ const float CODE_VERSION = 0.8; // Software revision
 // "..." does NOT allow to pass *zero* arguments, therefore there are two macros (debugPrintf and debugPrint):
 // debugPrint is for text messages *without* additional values.
 // debugPrintf is for text messages *with* placeholders (one or more) and additional arguments/values to be formatted.
-#define DEBUG_MODE  
+//#define DEBUG_MODE  
 #ifdef DEBUG_MODE
 #define DEBUG 1
 #else
