@@ -19,12 +19,9 @@ will finally go into deep sleep.
 
 The trailer presence switch, if open, disables the LEDs entirely, until coupled (switch closed).
 Bridge the contacts if there isn't a switch on your trailer!
-
-TODO: Better debug output using function
-
 */
 
-const float CODE_VERSION = 0.6; // Software revision
+const float CODE_VERSION = 0.8; // Software revision
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -42,8 +39,6 @@ const float CODE_VERSION = 0.6; // Software revision
 #define LIGHTS_BLINK_WAIT_MILLIS 100
 #define LIGHTS_BLINK_PERIOD_MILLIS 10000
 
-#define DEBUG_MODE  // Print additional debug messages to the serial monitor.
-
 // PINs used for LED lights and coupler switch
 #define TAILLIGHT_PIN 14  // (D5) Red tail- & brake-lights (combined)
 #define INDICATOR_L_PIN 5  // (D1) Orange left indicator (turn signal) light
@@ -60,9 +55,22 @@ const float CODE_VERSION = 0.6; // Software revision
 
 #define SWITCH_DETECT_MS 500  // Detect state of the coupler switch every 0.5 s.
 #define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s.
-#define MODE_TIMEOUT_S 300  // Time in seconds after which to returning automatically to MODE_RECEIVING.
-#define IDLE_TIMEOUT_S 600  // Seconds until ESP-NOW should timeout, if no messages are received.
+#define MODE_TIMEOUT_S 600  // Time in seconds after which to returning automatically to MODE_RECEIVING.
+#define IDLE_TIMEOUT_S 1200  // Seconds until ESP-NOW should timeout, if no messages are received.
 #define BLINK_TIMEOUT 180  // Minutes after the ESP8266 will finally go to sleep (only reset will be possible after that).
+
+// Enable or disable debug mode
+// "..." does NOT allow to pass *zero* arguments, therefore there are two macros (debugPrintf and debugPrint):
+// debugPrint is for text messages *without* additional values.
+// debugPrintf is for text messages *with* placeholders (one or more) and additional arguments/values to be formatted.
+#define DEBUG_MODE  
+#ifdef DEBUG_MODE
+#define DEBUG 1
+#else
+#define DEBUG 0
+#endif
+#define debugPrintf(fmt, ...) do { if (DEBUG) Serial.printf(fmt, __VA_ARGS__); } while (0)
+#define debugPrint(fmt) do { if (DEBUG) Serial.printf(fmt); } while (0)
 
 // Possible states/values for the runningMode variable below.
 enum RunningMode {
@@ -103,15 +111,11 @@ float batteryVoltage;  // Holds the current battery voltage.
 bool trailerCoupled;  // This is true, when the trailer is coupled (NO switch closed to GND)
 #define COUPLER_SWITCH_UNCOUPLED_DELAY 1500  // Time switch needs to be open to be considered "uncoupled"
 
-#ifdef DEBUG_MODE
-
 // Used for debugging purposes
 const unsigned long PRINT_DEBUG_DELAY_MILLIS = 5000;  // 5 s delay between debug output message block
 
 int adcRawValue;
 float adcVoltValue;
-
-#endif
 
 // Used for managing the LED lights available
 // Each object represents a distinct type of light (like tail lights, for example)
@@ -205,12 +209,15 @@ LedLight sideLight(SIDELIGHT_PIN);
 
 
 // Convenience function for debug printing to serial monitor
-void debugPrintf(const char *format, ...) {
-    va_list args;
-    va_start(args, format);
-    Serial.printf(format, args);
-    va_end(args);
-}
+//size_t debugPrintf(const char * format, ...)  __attribute__ ((format (printf, 1, 2)));
+// void debugPrintf(const char *format, ...) {
+//   if (DEBUG_MODE) {
+//     va_list args;
+//     va_start(args, format);
+//     Serial.printf(format, args);
+//     va_end(args);
+//   }
+// }
 
 
 // Used by EasyButton library for the "Flash" button.
@@ -245,8 +252,8 @@ void readBatteryVoltage() {
   }
 
 #ifdef DEBUG_MODE
-  adcRawValue = raw;
-  adcVoltValue = volt;
+    adcRawValue = raw;
+    adcVoltValue = volt;
 #endif
 
 }
@@ -271,11 +278,7 @@ void couplerSwitchDetect() {
 void onFlashButtonPressed() {
 
   idleTimeoutMillis = millis();  // Reset idle timeout time
-
-#ifdef DEBUG_MODE
-  Serial.printf("'Flash'/'Boot' button was pressed.\n\n");
-#endif
-
+  debugPrint("'Flash'/'Boot' button was pressed.\n\n");
   runningMode = (RunningMode)((runningMode + 1) % NUM_RUNNING_MODES);  // Switch to next running mode or reset back to zero.
 
 }
@@ -343,7 +346,7 @@ void longLightsTest() {
 // Blink red taillights.
 void blinkTailLights() {
   turnOffLights();
-  for (uint8_t i; i < LIGHTS_BLINK_TIMES; i++) {
+  for (uint8_t i = 0; i < LIGHTS_BLINK_TIMES; i++) {
     tailLight.on(LIGHTS_TEST_ON_MILLIS, LIGHTS_TEST_WAIT_MILLIS);
   }
 }
@@ -374,19 +377,11 @@ void setupEspNow() {
 
   // Init ESP-NOW and return, if not successfull.
   if (esp_now_init() == 0) {
-
-#ifdef DEBUG_MODE
-    Serial.printf("ESP-NOW enabled.\n\n");
-#endif
-
+    debugPrint("ESP-NOW enabled.\n\n");
     espNowEnabled = true;
     espNowMessagesReceived = 0;  // Reset message counter.
   } else {
-
-#ifdef DEBUG_MODE
-    Serial.printf("Error initializing ESP-NOW!\n\n");
-#endif
-
+    debugPrint("Error initializing ESP-NOW!\n\n");
     return;
   }
 
@@ -398,18 +393,10 @@ void disableEspNow() {
 
   esp_now_unregister_recv_cb();
   if (esp_now_deinit() == 0) {
-
-#ifdef DEBUG_MODE
-    Serial.printf("ESP-NOW disabled.\n\n");
-#endif
-
+    debugPrint("ESP-NOW disabled.\n\n");
     espNowEnabled = false;
   } else {
-
-#ifdef DEBUG_MODE
-    Serial.printf("Error disabling ESP-NOW!\n\n");
-#endif
-
+    debugPrint("Error disabling ESP-NOW!\n\n");
   }
   WiFi.disconnect();
   WiFi.mode(WIFI_OFF);
@@ -419,14 +406,11 @@ void disableEspNow() {
 
 // Pause receiving (and showing) lights data, but leave ESP-NOW enabled
 void pauseReceiving() {
+
   if (espNowEnabled) {
     esp_now_unregister_recv_cb();
     delay(300);
-
-#ifdef DEBUG_MODE
-    Serial.printf("Pausing processing ESP-NOW data.\n\n");
-#endif
-
+    debugPrint("Pausing processing ESP-NOW data.\n\n");
   }
 
 }
@@ -434,12 +418,10 @@ void pauseReceiving() {
 
 // Continue receiving (and showing) lights data
 void continueReceiving() {
+
   if (espNowEnabled) {
     esp_now_register_recv_cb(onTrailerDataReceive);
-
-#ifdef DEBUG_MODE
-    Serial.printf("Starting/Continuing processing ESP-NOW data.\n\n");
-#endif
+    debugPrint("Starting/Continuing processing ESP-NOW data.\n\n");
 
   }
 
@@ -490,11 +472,7 @@ void setup() {
   flashButton.onPressed(onFlashButtonPressed);
   if (flashButton.supportsInterrupt()) {
     flashButton.enableInterrupt(flashButtonInterrupt);
-
-#ifdef DEBUG_MODE
-    Serial.printf("Interrupt attached to 'Flash'/'Boot' button.\n\n");
-#endif
-
+    debugPrint("Interrupt attached to 'Flash'/'Boot' button.\n\n");
   }
 
   runningMode = MODE_RECEIVING;
@@ -511,38 +489,23 @@ void loop() {
   static RunningMode runningModeBefore = NUM_RUNNING_MODES;
   static unsigned long lastModeChangeMillis = millis();
   static bool trailerCoupledBefore = !trailerCoupled;
-
-#ifdef DEBUG_MODE
   static unsigned long lastDebugMillis = millis();
-#endif
 
   ts.update();  // TickerScheduler
 
-
   if (trailerCoupled != trailerCoupledBefore) {  // If state of trailer changed
-
     idleTimeoutMillis = millis();  // Reset idle timeout time
-
-#ifdef DEBUG_MODE
-    Serial.printf("Trailer state changed from %s to %s.\n\n", trailerCoupledBefore ? "coupled" : "uncoupled", trailerCoupled ? "coupled" : "uncoupled");
-#endif
-
+    debugPrintf("Trailer state changed from %s to %s.\n\n", trailerCoupledBefore ? "coupled" : "uncoupled", trailerCoupled ? "coupled" : "uncoupled");
     trailerCoupledBefore = trailerCoupled;
     if (trailerCoupled) {
       setupEspNow();
     } else {
       disableEspNow();
     }
-
   }  // If state of trailer changed
 
-
   if (runningMode != runningModeBefore) {  // If running mode changed
-
-#ifdef DEBUG_MODE
-    Serial.printf("Running mode changed from %d to %d.\n\n", runningModeBefore, runningMode);
-#endif
-
+    debugPrintf("Running mode changed from %d to %d.\n\n", runningModeBefore, runningMode);
     lastModeChangeMillis = millis();
     runningModeBefore = runningMode;
 
@@ -601,22 +564,14 @@ void loop() {
     }
 
   } else if ((runningMode != MODE_RECEIVING) && (millis() - lastModeChangeMillis > MODE_TIMEOUT_S * 1000)) {  // If lights test timeout has been reached.
-
-#ifdef DEBUG_MODE
-    Serial.printf("Lights test timeout reached. Resetting to mode #%d (from #%d).\n\n", MODE_RECEIVING, runningMode);
-#endif
-
+    debugPrintf("Lights test timeout reached. Resetting to mode #%d (from #%d).\n\n", MODE_RECEIVING, runningMode);
     runningMode = MODE_RECEIVING;
-
   }  // If running mode changed (or not)
 
 
   // If no buttons have been pressed and no messages have been received for a certain time
   if (millis() - idleTimeoutMillis > IDLE_TIMEOUT_S * 1000) {
-
-#ifdef DEBUG_MODE
-    Serial.printf("Idle timeout reached.\n\n");
-#endif
+    debugPrint("Idle timeout reached.\n\n");
 
     // Limit control to this point
     flashButton.disableInterrupt();
@@ -634,35 +589,33 @@ void loop() {
       delay(cycleDelayMillis);  // Wait until LIGHTS_BLINK_PERIOD_MILLIS ms are up
     }
 
-#ifdef DEBUG_MODE
-    Serial.printf("Going to sleep now. (cyclesLeft: %i, cycleDelayMillis: %i ms)\n\n", cyclesLeft, cycleDelayMillis);
-#endif
-
+    debugPrintf("Going to sleep now. (cyclesLeft: %i, cycleDelayMillis: %i ms)\n\n", cyclesLeft, cycleDelayMillis);
     Serial.flush();
-    digitalWrite(REVERSING_LIGHT_PIN, LOW);
+    digitalWrite(REVERSING_LIGHT_PIN, LOW);  // Probably doesn't change anything, because of strong 2.2 kΩ pull-up resistor in place.
     ESP.deepSleep(0);  // This will stop the MCU but lose control of the GPIO PINs, which may lead to certain LEDs turned on permanently.
   }
 
 #ifdef DEBUG_MODE
-  if (millis() - lastDebugMillis > PRINT_DEBUG_DELAY_MILLIS) {
-    Serial.printf("DEBUG_MODE (Refresh rate: %i Hz):\n", (uint8_t)(PRINT_DEBUG_DELAY_MILLIS / 1000.0));
-    Serial.printf("Current running mode  : %i\n", runningMode);
-    Serial.printf("Last activity         : %.1f s ago (Idle timeout limit: %i s)\n", (millis() - idleTimeoutMillis) / 1000.0, IDLE_TIMEOUT_S);
-    Serial.printf("Last mode change      : %.1f s ago (Mode timeout limit: %i s)\n", (millis() - lastModeChangeMillis) / 1000.0, MODE_TIMEOUT_S);
-    Serial.printf("Coupler switch        : %s\n", (digitalRead(COUPLER_SWITCH_PIN) == LOW) ? "closed" : "open");
-    Serial.printf("Trailer coupled state : %s\n", trailerCoupled ? "coupled" : "uncoupled");
-    Serial.printf("ESP-NOW state:        : %s\n", espNowEnabled ? "enabled" : "disabled");
-    Serial.printf("ESP-NOW message count : %i\n", espNowMessagesReceived);
-    Serial.printf("Battery voltage       : %.1f V (adcVoltValue: %.4f, BATTERY_VOLTAGE_OFFSET: %.4f, adcRawValue: %i)\n\n", batteryVoltage, adcVoltValue, BATTERY_VOLTAGE_OFFSET, adcRawValue);
+    if (millis() - lastDebugMillis > PRINT_DEBUG_DELAY_MILLIS) {
+      debugPrintf("Test, hello %s", "world");
+      debugPrintf("DEBUG_MODE (Refresh rate: %i Hz):\n", (uint8_t)(PRINT_DEBUG_DELAY_MILLIS / 1000.0));
+      debugPrintf("Current running mode  : %i\n", runningMode);
+      debugPrintf("Last activity         : %.1f s ago (Idle timeout limit: %i s)\n", (millis() - idleTimeoutMillis) / 1000.0, IDLE_TIMEOUT_S);
+      debugPrintf("Last mode change      : %.1f s ago (Mode timeout limit: %i s)\n", (millis() - lastModeChangeMillis) / 1000.0, MODE_TIMEOUT_S);
+      debugPrintf("Coupler switch        : %s\n", (digitalRead(COUPLER_SWITCH_PIN) == LOW) ? "closed" : "open");
+      debugPrintf("Trailer coupled state : %s\n", trailerCoupled ? "coupled" : "uncoupled");
+      debugPrintf("ESP-NOW state:        : %s\n", espNowEnabled ? "enabled" : "disabled");
+      debugPrintf("ESP-NOW message count : %i\n", espNowMessagesReceived);
+      debugPrintf("Battery voltage       : %.1f V (adcVoltValue: %.4f, BATTERY_VOLTAGE_OFFSET: %.4f, adcRawValue: %i)\n\n", batteryVoltage, adcVoltValue, BATTERY_VOLTAGE_OFFSET, adcRawValue);
 
-    Serial.printf("Taillights (TL)       : %i (received value: %i)\n", tailLight.pwm(), trailerData.tailLight);
-    Serial.printf("Sidelights (SL)       : %i (received value: %i)\n", sideLight.pwm(), trailerData.sideLight);
-    Serial.printf("Reversing Lights (REV): %i (received value: %i)\n", reversingLight.pwm(), trailerData.reversingLight);
-    Serial.printf("Indicator L (IL)      : %i (received value: %i)\n", indicatorL.pwm(), trailerData.indicatorL);
-    Serial.printf("Indicator R (IL)      : %i (received value: %i)\n\n", indicatorR.pwm(), trailerData.indicatorR);
+      debugPrintf("Taillights (TL)       : %i/%i (received value: %i/%i)\n", tailLight.pwm(), PWM_MAX, trailerData.tailLight, UINT8_MAX);
+      debugPrintf("Sidelights (SL)       : %i/%i (received value: %i/%i)\n", sideLight.pwm(), PWM_MAX, trailerData.sideLight, UINT8_MAX);
+      debugPrintf("Reversing Lights (REV): %i/%i (received value: %i/%i)\n", reversingLight.pwm(), PWM_MAX, trailerData.reversingLight, UINT8_MAX);
+      debugPrintf("Indicator L (IL)      : %i/%i (received value: %i/%i)\n", indicatorL.pwm(), PWM_MAX, trailerData.indicatorL, UINT8_MAX);
+      debugPrintf("Indicator R (IL)      : %i/%i (received value: %i/%i)\n\n", indicatorR.pwm(), PWM_MAX, trailerData.indicatorR, UINT8_MAX);
 
-    lastDebugMillis = millis();
-  }
+      lastDebugMillis = millis();
+    }
 #endif
 
 }
