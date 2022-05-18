@@ -21,7 +21,7 @@ The trailer presence switch, if open, disables the LEDs entirely, until coupled 
 Bridge the contacts if there isn't a switch on your trailer!
 */
 
-const float CODE_VERSION = 0.8; // Software revision
+const float CODE_VERSION = 0.9; // Software revision
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -33,11 +33,6 @@ const float CODE_VERSION = 0.8; // Software revision
 //#define LONG_LIGHTS_TEST  // If set, turn on all the lights in sequence, on startup, instead of just the indicators.
 #define LIGHTS_TEST_ON_MILLIS 500
 #define LIGHTS_TEST_WAIT_MILLIS 500
-
-#define LIGHTS_BLINK_TIMES 3
-#define LIGHTS_BLINK_ON_MILLIS 100
-#define LIGHTS_BLINK_WAIT_MILLIS 100
-#define LIGHTS_BLINK_PERIOD_MILLIS 10000
 
 // PINs used for LED lights and coupler switch
 #define TAILLIGHT_PIN 14  // (D5) Red tail- & brake-lights (combined)
@@ -57,7 +52,8 @@ const float CODE_VERSION = 0.8; // Software revision
 #define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s.
 #define MODE_TIMEOUT_S 600  // Time in seconds after which to returning automatically to MODE_RECEIVING.
 #define IDLE_TIMEOUT_S 1200  // Seconds until ESP-NOW should timeout, if no messages are received.
-#define BLINK_TIMEOUT 180  // Minutes after the ESP8266 will finally go to sleep (only reset will be possible after that).
+#define SLEEP_TIMEOUT_MINUTES 180  // Minutes after the ESP8266 will finally go to sleep (only reset will be possible after that).
+#define SLEEP_TIMEOUT_LOOP_PERIOD_MS 10000
 
 // Enable or disable debug mode
 // "..." does NOT allow to pass *zero* arguments, therefore there are two macros (debugPrintf and debugPrint):
@@ -105,7 +101,7 @@ typedef struct TrailerData {
 TrailerData trailerData;
 
 const float BATTERY_VOLTAGE_OFFSET = -0.135;
-const float BATTERY_WARNING_VOLTAGE = 3.5;  // Threshold voltage for voltage considered critical.
+const float BATTERY_LOW_VOLTAGE = 3.6;  // Threshold voltage for voltage considered critical.
 float batteryVoltage;  // Holds the current battery voltage.
 
 bool trailerCoupled;  // This is true, when the trailer is coupled (NO switch closed to GND)
@@ -208,32 +204,10 @@ LedLight reversingLight(REVERSING_LIGHT_PIN);
 LedLight sideLight(SIDELIGHT_PIN);
 
 
-// Convenience function for debug printing to serial monitor
-//size_t debugPrintf(const char * format, ...)  __attribute__ ((format (printf, 1, 2)));
-// void debugPrintf(const char *format, ...) {
-//   if (DEBUG_MODE) {
-//     va_list args;
-//     va_start(args, format);
-//     Serial.printf(format, args);
-//     va_end(args);
-//   }
-// }
-
-
 // Used by EasyButton library for the "Flash" button.
 void IRAM_ATTR flashButtonInterrupt() {
-
   flashButton.read();
-
 }
-
-
-// Called when switch pin changes state.
-// void IRAM_ATTR onCouplerSwitchChangeInterrupt() {
-
-//   couplerSwitchDetect();
-
-// }
 
 
 // Read 18650 battery voltage
@@ -264,11 +238,9 @@ void readBatteryVoltage() {
 void couplerSwitchDetect() {
 
   static unsigned long switchMillis = millis();
-
   if (digitalRead(COUPLER_SWITCH_PIN) == LOW) {
     switchMillis = millis();
   }
-
   trailerCoupled = ((millis() - switchMillis) <= COUPLER_SWITCH_UNCOUPLED_DELAY);  // Introduce some delay before uncoupled state.
 
 }
@@ -343,12 +315,14 @@ void longLightsTest() {
 
 }
 
+
 // Blink red taillights.
-void blinkTailLights() {
+unsigned long blinkLights(LedLight &light, uint8_t times, unsigned long onMillis, unsigned long waitMillis) {
   turnOffLights();
-  for (uint8_t i = 0; i < LIGHTS_BLINK_TIMES; i++) {
-    tailLight.on(LIGHTS_TEST_ON_MILLIS, LIGHTS_TEST_WAIT_MILLIS);
+  for (uint8_t i = 0; i < times; i++) {
+    light.on(onMillis, waitMillis);
   }
+  return times * (onMillis + waitMillis);
 }
 
 
@@ -367,11 +341,9 @@ void onTrailerDataReceive(uint8_t * mac, uint8_t *incomingData, uint8_t len) {
 void setupEspNow() {
 
   WiFi.disconnect();
-
   if (WiFi.SSID() != "") {
     ESP.eraseConfig();
   }
-
   WiFi.mode(WIFI_STA);
   WiFi.setOutputPower(0);
 
@@ -422,7 +394,6 @@ void continueReceiving() {
   if (espNowEnabled) {
     esp_now_register_recv_cb(onTrailerDataReceive);
     debugPrint("Starting/Continuing processing ESP-NOW data.\n\n");
-
   }
 
 }
@@ -436,7 +407,6 @@ void setup() {
   pinMode(A0, INPUT);  // Connected to Battery + using a 100 kΩ resistor (see function above).
 
   couplerSwitchDetect();  // Call once to get initial state for "trailerCoupled" variable.
-  // attachInterrupt(digitalPinToInterrupt(COUPLER_SWITCH_PIN), onCouplerSwitchChangeInterrupt, CHANGE);
 
   espNowEnabled = false;  // Set default state
 
@@ -462,9 +432,9 @@ void setup() {
     Serial.printf("  uint8_t broadcastAddress1[] = { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X };\n\n", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   }
 
-  // Consider battery voltage and warn if low
-  if (batteryVoltage < BATTERY_WARNING_VOLTAGE) {
-    blinkTailLights();
+  // Test current battery voltage and warn if low
+  if (batteryVoltage < BATTERY_LOW_VOLTAGE) {
+    blinkLights(tailLight, 3, 500, 500);
   }
 
   // Use "Flash" labeled button for other purposes
@@ -575,29 +545,29 @@ void loop() {
 
     // Limit control to this point
     flashButton.disableInterrupt();
-    ts.disableAll();
+    ts.disable(0);  // Disable polling coupler switch (ts #0), but keep reading battery voltage (ts #1)
     disableEspNow();
     turnOffLights();
 
-    uint32_t cyclesLeft = (uint32_t)(BLINK_TIMEOUT * 60 * 1000) / LIGHTS_BLINK_PERIOD_MILLIS;
-    unsigned long cycleDelayMillis = LIGHTS_BLINK_PERIOD_MILLIS - LIGHTS_BLINK_TIMES * (LIGHTS_BLINK_ON_MILLIS + LIGHTS_BLINK_WAIT_MILLIS);
+    uint16_t cyclesLeft = (uint16_t)((SLEEP_TIMEOUT_MINUTES * 60 * 1000) / SLEEP_TIMEOUT_LOOP_PERIOD_MS);
 
     while (cyclesLeft-- > 0) {
-      for (uint8_t i = 0; i < LIGHTS_BLINK_TIMES; i++) {
-        sideLight.on(LIGHTS_BLINK_ON_MILLIS, LIGHTS_BLINK_WAIT_MILLIS);  // Blink once each loop
+      unsigned long cyclePeriodMillis = SLEEP_TIMEOUT_LOOP_PERIOD_MS;  // One loop cycle shall be exactly this long.
+      cyclePeriodMillis -= blinkLights(sideLight, 3, 100, 100);  // Blink side lights and substract taken time.
+      if (batteryVoltage < BATTERY_LOW_VOLTAGE) {  // Additionally blink red taillight, if battery is low.
+        cyclePeriodMillis -= blinkLights(tailLight, 5, 200, 200);  // Blink tail lights and substract taken time.
       }
-      delay(cycleDelayMillis);  // Wait until LIGHTS_BLINK_PERIOD_MILLIS ms are up
+      debugPrintf("Loop cycles left %i\n\n", cyclesLeft);
+      delay(cyclePeriodMillis);  // Wait until the rest of the loop cycle time is up
     }
 
-    debugPrintf("Going to sleep now. (cyclesLeft: %i, cycleDelayMillis: %i ms)\n\n", cyclesLeft, cycleDelayMillis);
+    debugPrintf("Going to sleep now (loop cycles left: %i).\n\n", cyclesLeft);
     Serial.flush();
-    digitalWrite(REVERSING_LIGHT_PIN, LOW);  // Probably doesn't change anything, because of strong 2.2 kΩ pull-up resistor in place.
-    ESP.deepSleep(0);  // This will stop the MCU but lose control of the GPIO PINs, which may lead to certain LEDs turned on permanently.
+    ESP.deepSleep(0);  // This will stop the MCU but lose control of the GPIO PINs, which may lead to certain LEDs turning on permanently.
   }
 
 #ifdef DEBUG_MODE
     if (millis() - lastDebugMillis > PRINT_DEBUG_DELAY_MILLIS) {
-      debugPrintf("Test, hello %s", "world");
       debugPrintf("DEBUG_MODE (Refresh rate: %i Hz):\n", (uint8_t)(PRINT_DEBUG_DELAY_MILLIS / 1000.0));
       debugPrintf("Current running mode  : %i\n", runningMode);
       debugPrintf("Last activity         : %.1f s ago (Idle timeout limit: %i s)\n", (millis() - idleTimeoutMillis) / 1000.0, IDLE_TIMEOUT_S);
