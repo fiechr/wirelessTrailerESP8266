@@ -19,6 +19,8 @@ will finally go into deep sleep.
 
 The trailer presence switch, if open, disables the LEDs entirely, until coupled (switch closed).
 Bridge the contacts if there isn't a switch on your trailer!
+
+TODO: Use Ticker directly, instead of TickerScheduler
 */
 
 const float CODE_VERSION = 0.9; // Software revision
