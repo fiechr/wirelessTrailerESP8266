@@ -48,7 +48,7 @@ const float CODE_VERSION = 0.9; // Software revision
 
 // Used for analogWrite()
 #define PWM_MIN 0
-#define PWM_MAX 1023
+#define PWM_MAX 255
 
 #define SWITCH_DETECT_MS 500  // Detect state of the coupler switch every 0.5 s.
 #define READ_BATTERY_VOLTAGE_MS 10000  // Read battery voltage every 10 s.
@@ -150,22 +150,11 @@ class LedLight {
       delay(waitMillis);
     }
 
-    uint16_t pwm() {
+    uint8_t pwm() {
       return _pwmValue;
     }
 
     void pwm(uint8_t pwmValue) {
-      long newValue = map(pwmValue, 0, UINT8_MAX, PWM_MIN, PWM_MAX);
-      if (newValue != _pwmValue) {
-        _pwmValue = newValue;
-        _writeOut();
-      }
-    }
-
-    void pwm(uint16_t pwmValue) {
-        if (pwmValue > PWM_MAX) {
-          pwmValue = PWM_MAX;
-        }
         if (pwmValue != _pwmValue) {
           _pwmValue = pwmValue;
           _writeOut();
@@ -190,7 +179,7 @@ class LedLight {
 
   private:
     uint8_t _pin;
-    uint16_t _pwmValue;
+    uint8_t _pwmValue;
 
     void _writeOut() {
       analogWrite(_pin, _pwmValue);
@@ -403,6 +392,9 @@ void continueReceiving() {
 
 // Main setup, runs only once
 void setup() {
+
+  analogWriteResolution(8);  // PWM range from 0 to 255 (the same as the received values, no need to go higher)
+  analogWriteFreq(200);  // 200 Hz, Keep low, since ESP8266 uses software PWM only (default is 1kHz)
 
   pinMode(COUPLER_SWITCH_PIN, INPUT_PULLUP);  // Additional 10k pull up resistor in place
   pinMode(FLASH_BUTTON_PIN, INPUT_PULLUP);  // "Flash" button to user for other stuff
